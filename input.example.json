@@ -1,0 +1,45 @@
+{
+  "name": "My Satis Repository",
+  "homepage": "http://packages.example.org",
+  "repositories": [
+    { "type": "composer", "url": "http://packages.example.org/" },
+    { "type": "vcs", "url": "https://github.com/mycompany/privaterepo" },
+    { "type": "vcs", "url": "http://svn.example.org/private/repo" },
+    {
+      "name": "mycompany/privaterepo2",
+      "type": "vcs",
+      "url": "https://github.com/mycompany/privaterepo2",
+      "options": {
+        "ssh2": {
+          "username": "composer",
+          "pubkey_file": "/path/to/.ssh/id_rsa.pub",
+          "privkey_file": "/path/to/.ssh/id_rsa"
+        },
+        "ssl": {
+          "local_cert": "/path/to/.ssl/composer.pem"
+        },
+        "http": {
+          "header": ["API-TOKEN: YOUR-API-TOKEN"]
+        }
+      }
+    }
+  ],
+  "require-all": true,
+  "sources": [
+    {
+      "sourceType": "gitlab",
+      "sourceIdent": "349181",
+      "sourceAuth": "GITLAB_PAT"
+    },
+    {
+      "sourceType": "github",
+      "sourceIdent": "composer",
+      "sourceAuth": "GITHUB_PAT"
+    },
+    {
+      "sourceType": "azdo",
+      "sourceIdent": "https://dev.azure.com/myorg/myproject",
+      "sourceAuth": "AZDO_PAT"
+    }
+  ]
+}

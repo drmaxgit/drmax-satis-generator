@@ -1,0 +1,253 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"github.com/google/go-github/v42/github"
+	"github.com/microsoft/azure-devops-go-api/azuredevops"
+	"github.com/microsoft/azure-devops-go-api/azuredevops/git"
+	"github.com/mitchellh/mapstructure"
+	"github.com/prometheus/common/log"
+	"github.com/prometheus/common/version"
+	"github.com/xanzy/go-gitlab"
+	"golang.org/x/oauth2"
+	"gopkg.in/alecthomas/kingpin.v2"
+	"io/ioutil"
+	"net/http"
+	"strings"
+)
+
+const composerPath = "composer.json"
+
+type source struct {
+	SourceType  string `json:"sourceType"`
+	SourceIdent string `json:"sourceIdent"`
+	SourceAuth  string `json:"sourceAuth"`
+}
+type repository struct {
+	Name    string      `json:"name"`
+	Type    string      `json:"type"`
+	URL     string      `json:"url"`
+	Options interface{} `json:"options"`
+}
+
+var (
+	inputFile  = kingpin.Flag("input", "Input file with basic satis.json configuration").Default("input.json").String()
+	outputFile = kingpin.Flag("output", "Output file - where to save generated result").Default("satis.json").String()
+)
+
+func main() {
+	log.AddFlags(kingpin.CommandLine)
+	kingpin.HelpFlag.Short('h')
+	kingpin.Version(version.Version)
+	kingpin.Parse()
+
+	output := parseSources()
+
+	file, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		log.Fatalf("could not prepare output file: %s", err.Error())
+	}
+	err = ioutil.WriteFile(*outputFile, file, 0644)
+	if err != nil {
+		log.Fatalf("could not write file %s: %s", *outputFile, err.Error())
+	}
+}
+
+func parseSources() interface{} {
+	output, sources := parseInput()
+	var repositories []repository
+	if len(output["repositories"].([]interface{})) > 0 {
+		switch t := output["repositories"].(type) {
+		case []interface{}:
+			for _, v := range t {
+				var repo repository
+				err := mapstructure.Decode(v, &repo)
+				if err != nil {
+					log.Errorf("could not map `%+v` repository struct, skipping", v)
+					continue
+				}
+				repositories = append(repositories, repo)
+			}
+		}
+	}
+
+	for _, source := range sources {
+		var repos []repository
+		switch source.SourceType {
+		case "gitlab":
+			repos = parseGitlab(source)
+		case "github":
+			repos = parseGithub(source)
+		case "azdo":
+			repos = parseAzDO(source)
+		default:
+			log.Errorf("could not parse source %s with unknown type %s", source.SourceIdent, source.SourceType)
+			continue
+		}
+		repositories = append(repositories, repos...)
+	}
+	output["repositories"] = repositories
+	return output
+}
+
+func parseAzDO(s source) (repositories []repository) {
+	log.Debugf("downloading Azure DevOps projects for %s", s.SourceIdent)
+	idents := strings.Split(s.SourceIdent, "/")
+	org := strings.Join(idents[:len(idents)-1], "/")
+	project := idents[len(idents)-1]
+
+	connection := azuredevops.NewPatConnection(org, s.SourceAuth)
+
+	ctx := context.Background()
+
+	client, err := git.NewClient(ctx, connection)
+	if err != nil {
+		log.Fatal(err)
+	}
+	repos, err := client.GetRepositories(ctx, git.GetRepositoriesArgs{Project: &project})
+	if err != nil {
+		log.Errorf("could not fetch azdo repositories %s", err.Error())
+	}
+
+	for _, repo := range *repos {
+		file, err := client.GetItem(ctx, git.GetItemArgs{
+			RepositoryId: gitlab.String(repo.Id.String()),
+			Path:         gitlab.String("/" + composerPath),
+		})
+		if file == nil || err != nil {
+			continue
+		}
+		repositories = append(
+			repositories,
+			repository{
+				Name: *repo.Name,
+				Type: "git",
+				URL:  *repo.SshUrl,
+			},
+		)
+	}
+
+	return repositories
+}
+
+func parseGithub(s source) (repositories []repository) {
+	log.Debugf("downloading github projects for organization %s", s.SourceIdent)
+	var tc *http.Client
+	ctx := context.Background()
+	if s.SourceAuth != "" {
+		ts := oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: s.SourceAuth},
+		)
+		tc = oauth2.NewClient(ctx, ts)
+	}
+
+	client := github.NewClient(tc)
+
+	options := github.RepositoryListByOrgOptions{
+		ListOptions: github.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
+	for {
+		repos, response, err := client.Repositories.ListByOrg(ctx, s.SourceIdent, &options)
+		if err != nil {
+			log.Errorf("could not fetch github response %s", err.Error())
+		}
+		for _, repo := range repos {
+			file, _, _, err := client.Repositories.GetContents(ctx, s.SourceIdent, repo.GetName(), composerPath, &github.RepositoryContentGetOptions{})
+			if file == nil || err != nil {
+				continue
+			}
+			repositories = append(
+				repositories,
+				repository{
+					Name: repo.GetName(),
+					Type: "git",
+					URL:  repo.GetSSHURL(),
+				},
+			)
+		}
+		if response.NextPage == 0 {
+			break
+		}
+		options.Page++
+	}
+	return repositories
+}
+
+func parseGitlab(s source) (repositories []repository) {
+	log.Debugf("downloading gitlab projects for group %s", s.SourceIdent)
+	client, err := gitlab.NewClient(s.SourceAuth)
+	if err != nil {
+		log.Error(err)
+		return repositories
+	}
+
+	options := gitlab.ListGroupProjectsOptions{
+		ListOptions: gitlab.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
+
+	for {
+		groupProjects, response, _ := client.Groups.ListGroupProjects(s.SourceIdent, &options)
+		for _, project := range groupProjects {
+			file, _, err := client.RepositoryFiles.GetFile(project.ID, composerPath, &gitlab.GetFileOptions{Ref: &project.DefaultBranch})
+			if file == nil || err != nil {
+				continue
+			}
+			repositories = append(
+				repositories,
+				repository{
+					Name: project.Name,
+					Type: "git",
+					URL:  project.SSHURLToRepo,
+				},
+			)
+		}
+
+		if response.CurrentPage == response.TotalPages {
+			break
+		}
+		options.Page++
+	}
+
+	return repositories
+}
+
+func parseInput() (map[string]interface{}, []source) {
+	file, _ := ioutil.ReadFile(*inputFile)
+
+	var configFile interface{}
+	var sources []source
+
+	err := json.Unmarshal(file, &configFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	mapConfig := configFile.(map[string]interface{})
+	if len(strings.TrimSpace(mapConfig["name"].(string))) == 0 {
+		log.Error("input file does not contain `name` attribute")
+	}
+	if len(strings.TrimSpace(mapConfig["homepage"].(string))) == 0 {
+		log.Error("input file does not contain `homepage` attribute")
+	}
+
+	if len(mapConfig["sources"].([]interface{})) == 0 {
+		log.Fatal("`sources` attribute has to be specified in the input file")
+	}
+	err = mapstructure.Decode(mapConfig["sources"], &sources)
+	if err != nil {
+		log.Fatalf("could not map `sources` attribute to struct, check validity of input file")
+	}
+	delete(mapConfig, "sources")
+
+	if len(mapConfig["repositories"].([]interface{})) == 0 {
+		mapConfig["repositories"] = []repository{}
+	}
+
+	return mapConfig, sources
+}
