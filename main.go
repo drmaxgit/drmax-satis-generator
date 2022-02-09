@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/google/go-github/v42/github"
-	"github.com/microsoft/azure-devops-go-api/azuredevops"
-	"github.com/microsoft/azure-devops-go-api/azuredevops/git"
+	"github.com/microsoft/azure-devops-go-api/azuredevops/v6"
+	"github.com/microsoft/azure-devops-go-api/azuredevops/v6/git"
 	"github.com/mitchellh/mapstructure"
 	"github.com/prometheus/common/log"
 	"github.com/prometheus/common/version"
@@ -57,7 +57,7 @@ func main() {
 func parseSources() interface{} {
 	output, sources := parseInput()
 	var repositories []repository
-	if len(output["repositories"].([]interface{})) > 0 {
+	if output["repositories"] != nil && len(output["repositories"].([]interface{})) > 0 {
 		switch t := output["repositories"].(type) {
 		case []interface{}:
 			for _, v := range t {
@@ -111,6 +111,7 @@ func parseAzDO(s source) (repositories []repository) {
 	}
 
 	for _, repo := range *repos {
+		//isDisabled attribute is available from API version 7.1 which is currently in preview
 		file, err := client.GetItem(ctx, git.GetItemArgs{
 			RepositoryId: gitlab.String(repo.Id.String()),
 			Path:         gitlab.String("/" + composerPath),
@@ -156,6 +157,9 @@ func parseGithub(s source) (repositories []repository) {
 			log.Errorf("could not fetch github response %s", err.Error())
 		}
 		for _, repo := range repos {
+			if repo.GetArchived() {
+				continue
+			}
 			file, _, _, err := client.Repositories.GetContents(ctx, s.SourceIdent, repo.GetName(), composerPath, &github.RepositoryContentGetOptions{})
 			if file == nil || err != nil {
 				continue
@@ -195,6 +199,9 @@ func parseGitlab(s source) (repositories []repository) {
 	for {
 		groupProjects, response, _ := client.Groups.ListGroupProjects(s.SourceIdent, &options)
 		for _, project := range groupProjects {
+			if project.Archived {
+				continue
+			}
 			file, _, err := client.RepositoryFiles.GetFile(project.ID, composerPath, &gitlab.GetFileOptions{Ref: &project.DefaultBranch})
 			if file == nil || err != nil {
 				continue
@@ -229,14 +236,14 @@ func parseInput() (map[string]interface{}, []source) {
 		log.Fatal(err)
 	}
 	mapConfig := configFile.(map[string]interface{})
-	if len(strings.TrimSpace(mapConfig["name"].(string))) == 0 {
+	if _, ok := mapConfig["name"]; ok && len(strings.TrimSpace(mapConfig["name"].(string))) == 0 {
 		log.Error("input file does not contain `name` attribute")
 	}
-	if len(strings.TrimSpace(mapConfig["homepage"].(string))) == 0 {
+	if _, ok := mapConfig["homepage"]; ok && len(strings.TrimSpace(mapConfig["homepage"].(string))) == 0 {
 		log.Error("input file does not contain `homepage` attribute")
 	}
 
-	if len(mapConfig["sources"].([]interface{})) == 0 {
+	if _, ok := mapConfig["sources"]; ok && len(mapConfig["sources"].([]interface{})) == 0 {
 		log.Fatal("`sources` attribute has to be specified in the input file")
 	}
 	err = mapstructure.Decode(mapConfig["sources"], &sources)
@@ -245,8 +252,8 @@ func parseInput() (map[string]interface{}, []source) {
 	}
 	delete(mapConfig, "sources")
 
-	if len(mapConfig["repositories"].([]interface{})) == 0 {
-		mapConfig["repositories"] = []repository{}
+	if _, ok := mapConfig["repositories"]; !ok || len(mapConfig["repositories"].([]interface{})) == 0 {
+		mapConfig["repositories"] = nil
 	}
 
 	return mapConfig, sources

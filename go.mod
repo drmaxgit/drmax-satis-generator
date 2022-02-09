@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/google/go-github/v42 v42.0.0
-	github.com/microsoft/azure-devops-go-api/azuredevops v1.0.0-b5
+	github.com/microsoft/azure-devops-go-api/azuredevops/v6 v6.0.1
 	github.com/mitchellh/mapstructure v1.4.3
 	github.com/prometheus/common v0.9.1
 	github.com/xanzy/go-gitlab v0.34.2

@@ -1,5 +1,5 @@
 {
-  "name": "My Satis Repository",
+  "name": "myorg/satis",
   "homepage": "http://packages.example.org",
   "repositories": [
     { "type": "composer", "url": "http://packages.example.org/" },
