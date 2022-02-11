@@ -92,7 +92,29 @@ func parseSources() interface{} {
 }
 
 func parseAzDO(s source) (repositories []repository) {
-	log.Debugf("downloading Azure DevOps projects for %s", s.SourceIdent)
+	log.Infof("downloading Azure DevOps projects for %s", s.SourceIdent)
+	project, ctx, client, err := getAzDOClient(s)
+	repos, err := client.GetRepositories(ctx, git.GetRepositoriesArgs{Project: &project})
+	if err != nil {
+		log.Errorf("could not fetch azdo repositories %s", err.Error())
+	}
+
+	for _, repo := range *repos {
+		repoInfo := prepareAzDORepo(ctx, client, repo)
+		if repoInfo == nil {
+			continue
+		}
+
+		repositories = append(
+			repositories,
+			*repoInfo,
+		)
+	}
+
+	return repositories
+}
+
+func getAzDOClient(s source) (string, context.Context, git.Client, error) {
 	idents := strings.Split(s.SourceIdent, "/")
 	org := strings.Join(idents[:len(idents)-1], "/")
 	project := idents[len(idents)-1]
@@ -105,45 +127,30 @@ func parseAzDO(s source) (repositories []repository) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	repos, err := client.GetRepositories(ctx, git.GetRepositoriesArgs{Project: &project})
-	if err != nil {
-		log.Errorf("could not fetch azdo repositories %s", err.Error())
+	return project, ctx, client, err
+}
+
+func prepareAzDORepo(ctx context.Context, client git.Client, repo git.GitRepository) *repository {
+	//Cannot check for disabled repository - `isDisabled` attribute is available from API version 7.1 which is currently in preview.
+	file, err := client.GetItem(ctx, git.GetItemArgs{
+		RepositoryId: gitlab.String(repo.Id.String()),
+		Path:         gitlab.String("/" + composerPath),
+	})
+	if file == nil || err != nil {
+		return nil
 	}
 
-	for _, repo := range *repos {
-		//isDisabled attribute is available from API version 7.1 which is currently in preview
-		file, err := client.GetItem(ctx, git.GetItemArgs{
-			RepositoryId: gitlab.String(repo.Id.String()),
-			Path:         gitlab.String("/" + composerPath),
-		})
-		if file == nil || err != nil {
-			continue
-		}
-		repositories = append(
-			repositories,
-			repository{
-				Name: *repo.Name,
-				Type: "git",
-				URL:  *repo.SshUrl,
-			},
-		)
+	repoInfo := repository{
+		Name: *repo.Name,
+		Type: "git",
+		URL:  *repo.SshUrl,
 	}
-
-	return repositories
+	return &repoInfo
 }
 
 func parseGithub(s source) (repositories []repository) {
-	log.Debugf("downloading github projects for organization %s", s.SourceIdent)
-	var tc *http.Client
-	ctx := context.Background()
-	if s.SourceAuth != "" {
-		ts := oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: s.SourceAuth},
-		)
-		tc = oauth2.NewClient(ctx, ts)
-	}
-
-	client := github.NewClient(tc)
+	log.Infof("downloading github projects for organization %s", s.SourceIdent)
+	ctx, client := getGithubClient(s)
 
 	options := github.RepositoryListByOrgOptions{
 		ListOptions: github.ListOptions{
@@ -157,20 +164,13 @@ func parseGithub(s source) (repositories []repository) {
 			log.Errorf("could not fetch github response %s", err.Error())
 		}
 		for _, repo := range repos {
-			if repo.GetArchived() {
-				continue
-			}
-			file, _, _, err := client.Repositories.GetContents(ctx, s.SourceIdent, repo.GetName(), composerPath, &github.RepositoryContentGetOptions{})
-			if file == nil || err != nil {
+			repoInfo := prepareGithubRepo(ctx, client, s, repo)
+			if repoInfo == nil {
 				continue
 			}
 			repositories = append(
 				repositories,
-				repository{
-					Name: repo.GetName(),
-					Type: "git",
-					URL:  repo.GetSSHURL(),
-				},
+				*repoInfo,
 			)
 		}
 		if response.NextPage == 0 {
@@ -181,8 +181,38 @@ func parseGithub(s source) (repositories []repository) {
 	return repositories
 }
 
+func getGithubClient(s source) (context.Context, *github.Client) {
+	var tc *http.Client
+	ctx := context.Background()
+	if s.SourceAuth != "" {
+		ts := oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: s.SourceAuth},
+		)
+		tc = oauth2.NewClient(ctx, ts)
+	}
+
+	client := github.NewClient(tc)
+	return ctx, client
+}
+
+func prepareGithubRepo(ctx context.Context, client *github.Client, s source, repo *github.Repository) *repository {
+	if repo.GetArchived() {
+		return nil
+	}
+	file, _, _, err := client.Repositories.GetContents(ctx, s.SourceIdent, repo.GetName(), composerPath, &github.RepositoryContentGetOptions{})
+	if file == nil || err != nil {
+		return nil
+	}
+	repoInfo := repository{
+		Name: repo.GetName(),
+		Type: "git",
+		URL:  repo.GetSSHURL(),
+	}
+	return &repoInfo
+}
+
 func parseGitlab(s source) (repositories []repository) {
-	log.Debugf("downloading gitlab projects for group %s", s.SourceIdent)
+	log.Infof("downloading gitlab projects for group %s", s.SourceIdent)
 	client, err := gitlab.NewClient(s.SourceAuth)
 	if err != nil {
 		log.Error(err)
@@ -199,20 +229,13 @@ func parseGitlab(s source) (repositories []repository) {
 	for {
 		groupProjects, response, _ := client.Groups.ListGroupProjects(s.SourceIdent, &options)
 		for _, project := range groupProjects {
-			if project.Archived {
-				continue
-			}
-			file, _, err := client.RepositoryFiles.GetFile(project.ID, composerPath, &gitlab.GetFileOptions{Ref: &project.DefaultBranch})
-			if file == nil || err != nil {
+			repoInfo := prepareGitlabRepo(project, client)
+			if repoInfo == nil {
 				continue
 			}
 			repositories = append(
 				repositories,
-				repository{
-					Name: project.Name,
-					Type: "git",
-					URL:  project.SSHURLToRepo,
-				},
+				*repoInfo,
 			)
 		}
 
@@ -223,6 +246,22 @@ func parseGitlab(s source) (repositories []repository) {
 	}
 
 	return repositories
+}
+
+func prepareGitlabRepo(project *gitlab.Project, client *gitlab.Client) *repository {
+	if project.Archived {
+		return nil
+	}
+	file, _, err := client.RepositoryFiles.GetFile(project.ID, composerPath, &gitlab.GetFileOptions{Ref: &project.DefaultBranch})
+	if file == nil || err != nil {
+		return nil
+	}
+	repoInfo := repository{
+		Name: project.Name,
+		Type: "git",
+		URL:  project.SSHURLToRepo,
+	}
+	return &repoInfo
 }
 
 func parseInput() (map[string]interface{}, []source) {
