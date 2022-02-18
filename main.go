@@ -224,6 +224,7 @@ func parseGitlab(s source) (repositories []repository) {
 			Page:    1,
 			PerPage: 100,
 		},
+		IncludeSubgroups: gitlab.Bool(true),
 	}
 
 	for {
