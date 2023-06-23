@@ -29,7 +29,11 @@
     {
       "sourceType": "gitlab",
       "sourceIdent": "349181",
-      "sourceAuth": "GITLAB_PAT"
+      "sourceAuth": "GITLAB_PAT",
+      "exclude": [
+        "repository-name",
+        "other-repository"
+      ]
     },
     {
       "sourceType": "github",

@@ -20,9 +20,10 @@ import (
 const composerPath = "composer.json"
 
 type source struct {
-	SourceType  string `json:"sourceType"`
-	SourceIdent string `json:"sourceIdent"`
-	SourceAuth  string `json:"sourceAuth"`
+	SourceType  string   `json:"sourceType"`
+	SourceIdent string   `json:"sourceIdent"`
+	SourceAuth  string   `json:"sourceAuth"`
+	Exclude     []string `json:"exclude"`
 }
 type repository struct {
 	Name    string      `json:"name"`
@@ -99,9 +100,10 @@ func parseAzDO(s source) (repositories []repository) {
 		log.Errorf("could not fetch azdo repositories %s", err.Error())
 	}
 
+	excludes := strings.Join(s.Exclude, " ")
 	for _, repo := range *repos {
 		repoInfo := prepareAzDORepo(ctx, client, repo)
-		if repoInfo == nil {
+		if repoInfo == nil || strings.Contains(excludes, repoInfo.Name) {
 			continue
 		}
 
@@ -163,9 +165,10 @@ func parseGithub(s source) (repositories []repository) {
 		if err != nil {
 			log.Errorf("could not fetch github response %s", err.Error())
 		}
+		excludes := strings.Join(s.Exclude, " ")
 		for _, repo := range repos {
 			repoInfo := prepareGithubRepo(ctx, client, s, repo)
-			if repoInfo == nil {
+			if repoInfo == nil || strings.Contains(excludes, repoInfo.Name) {
 				continue
 			}
 			repositories = append(
@@ -229,9 +232,10 @@ func parseGitlab(s source) (repositories []repository) {
 
 	for {
 		groupProjects, response, _ := client.Groups.ListGroupProjects(s.SourceIdent, &options)
+		excludes := strings.Join(s.Exclude, " ")
 		for _, project := range groupProjects {
 			repoInfo := prepareGitlabRepo(project, client)
-			if repoInfo == nil {
+			if repoInfo == nil || strings.Contains(excludes, repoInfo.Name) {
 				continue
 			}
 			repositories = append(
