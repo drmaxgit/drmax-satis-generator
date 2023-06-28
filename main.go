@@ -100,10 +100,9 @@ func parseAzDO(s source) (repositories []repository) {
 		log.Errorf("could not fetch azdo repositories %s", err.Error())
 	}
 
-	excludes := strings.Join(s.Exclude, " ")
 	for _, repo := range *repos {
 		repoInfo := prepareAzDORepo(ctx, client, repo)
-		if repoInfo == nil || strings.Contains(excludes, repoInfo.Name) {
+		if repoInfo == nil || isExcluded(s.Exclude, repoInfo.Name) {
 			continue
 		}
 
@@ -165,10 +164,9 @@ func parseGithub(s source) (repositories []repository) {
 		if err != nil {
 			log.Errorf("could not fetch github response %s", err.Error())
 		}
-		excludes := strings.Join(s.Exclude, " ")
 		for _, repo := range repos {
 			repoInfo := prepareGithubRepo(ctx, client, s, repo)
-			if repoInfo == nil || strings.Contains(excludes, repoInfo.Name) {
+			if repoInfo == nil || isExcluded(s.Exclude, repoInfo.Name) {
 				continue
 			}
 			repositories = append(
@@ -232,10 +230,9 @@ func parseGitlab(s source) (repositories []repository) {
 
 	for {
 		groupProjects, response, _ := client.Groups.ListGroupProjects(s.SourceIdent, &options)
-		excludes := strings.Join(s.Exclude, " ")
 		for _, project := range groupProjects {
 			repoInfo := prepareGitlabRepo(project, client)
-			if repoInfo == nil || strings.Contains(excludes, repoInfo.Name) {
+			if repoInfo == nil || isExcluded(s.Exclude, repoInfo.Name) {
 				continue
 			}
 			repositories = append(
@@ -301,4 +298,13 @@ func parseInput() (map[string]interface{}, []source) {
 	}
 
 	return mapConfig, sources
+}
+
+func isExcluded(l []string, n string) bool {
+	for _, a := range l {
+		if a == n {
+			return true
+		}
+	}
+	return false
 }
