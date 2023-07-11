@@ -63,7 +63,3 @@ The values of source can be of following values:
 | **Gitlab**       | `gitlab`       | _group id to process_<br>`349181` for https://gitlab.com/gitlab-examples      | _Personal Access Token_ - [Create one here](https://gitlab.com/-/profile/personal_access_tokens )<br>Required scopes are  `api, read_api, read_repository`   | Names of repositories to exclude from final `satis.json` |
 | **Github**       | `github`       | _organization slug_<br>`composer` for https://github.com/composer             | _Personal access token_ - [Create one here](https://github.com/settings/tokens )<br>Required scopes are  `repo, read_org`                                    |Names of repositories to exclude from final `satis.json`|
 | **Azure DevOps** | `azdo`         | _full organization + project path_<br>`https://dev.azure.com/myorg/myproject` | _Personal Access Token_<br>Link for creating access token is<br>`https://dev.azure.com/YOURORG/_usersSettings/tokens`<br> Required scopes are  `Code > read` |Names of repositories to exclude from final `satis.json`|
-
-## Known issues
-
-- **Azure DevOps disabled repositories are not ommited** - Azure DevOps API adds the parameter in version 7.1 which is not currently available in the API adapter used.
