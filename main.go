@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/google/go-github/v42/github"
-	"github.com/microsoft/azure-devops-go-api/azuredevops/v6"
-	"github.com/microsoft/azure-devops-go-api/azuredevops/v6/git"
+	"github.com/microsoft/azure-devops-go-api/azuredevops/v7"
+	"github.com/microsoft/azure-devops-go-api/azuredevops/v7/git"
 	"github.com/mitchellh/mapstructure"
 	"github.com/prometheus/common/log"
 	"github.com/prometheus/common/version"
@@ -132,7 +132,9 @@ func getAzDOClient(s source) (string, context.Context, git.Client, error) {
 }
 
 func prepareAzDORepo(ctx context.Context, client git.Client, repo git.GitRepository) *repository {
-	//Cannot check for disabled repository - `isDisabled` attribute is available from API version 7.1 which is currently in preview.
+	if repo.IsDisabled != nil && *repo.IsDisabled {
+		return nil
+	}
 	file, err := client.GetItem(ctx, git.GetItemArgs{
 		RepositoryId: gitlab.String(repo.Id.String()),
 		Path:         gitlab.String("/" + composerPath),
